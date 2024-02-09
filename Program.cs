@@ -1,10 +1,14 @@
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Management;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Security.Principal;
+using static System.Net.Mime.MediaTypeNames;
+using System.Reflection;
 
 namespace RAMLIMITER
 {
@@ -15,6 +19,45 @@ namespace RAMLIMITER
         [DllImport("kernel32.dll")]
         static extern bool SetProcessWorkingSetSize(IntPtr proc, int min, int max);
 
+        // Method to get the program's permissions
+        static bool IsAdmin()
+        {
+            WindowsIdentity id = WindowsIdentity.GetCurrent();
+            WindowsPrincipal principal = new WindowsPrincipal(id);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+
+        // Method to elevate the program's privileges
+        static void ElevatePrivileges(string args)
+        {
+            string argsString = string.Concat(args);
+            if (!IsAdmin())
+            {
+                ProcessStartInfo proc = new ProcessStartInfo();
+                proc.UseShellExecute = true;
+                proc.WorkingDirectory = Environment.CurrentDirectory;
+                proc.FileName = Assembly.GetEntryAssembly().CodeBase;
+                proc.Arguments = args;
+                proc.Verb = "runas";
+
+                Console.Clear();
+                Console.WriteLine("RAM Limiter does not currently have admin. privileges.\nDepending on the programs you wish to limit, admin. privileges may be required.\n\nWould you like to run RAM Limiter as admin.? (y/n)");
+                ConsoleKey adminResponse = Console.ReadKey(true).Key;
+                if (adminResponse == ConsoleKey.Y)
+                {
+                    try
+                    {
+                        Process.Start(proc);
+                        Environment.Exit(0);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Could not elevate program. \n\n" + ex.ToString());
+                    }
+                }
+            }
+        }
+
         // Method to get all processes matching the custom process name
         public static List<Process> GetCustom(string processName)
         {
@@ -22,12 +65,42 @@ namespace RAMLIMITER
         }
 
         // Method to limit RAM usage of multiple custom processes
-        static void CustomRamLimiter(int min, int max)
+        static void CustomRamLimiter(int min, int max, bool useConfig = false, string configFile = "RAMLimiter.ini")
         {
-            Console.WriteLine("Type Process Names Separated by Commas (e.g., chrome,obs,discord):");
-            string processNamesInput = Console.ReadLine();
-            List<string> processNames = processNamesInput.Split(',').Select(p => p.Trim().ToLower()).ToList();
-
+            List<string> processNames = null;
+            if (useConfig)
+            {
+                configInput:
+                if (configFile == null)
+                {
+                    Console.WriteLine("Input the name of a configuration file to be read:\nNOTE: This file should contain a list of processes to limit, with one name on each line.");
+                    configFile = Console.ReadLine();
+                }
+                string configDir = Path.GetDirectoryName(Process.GetCurrentProcess().MainModule.FileName);
+                Console.WriteLine(configDir + configFile);
+                if (File.Exists(configFile))
+                {
+                    var lines = File.ReadLines(configFile);
+                    string processNamesInput = null;
+                    foreach (var line in lines)
+                    {
+                        processNamesInput = line + "," + processNamesInput;
+                    }
+                    processNames = processNamesInput.Split(',').Select(p => p.Trim().ToLower()).ToList();
+                }
+                else
+                {
+                    Console.WriteLine("ERROR: Could not find the " + configFile + " configuration file.\n");
+                    configFile = null;
+                    goto configInput;
+                }
+            }
+            else
+            {
+                Console.WriteLine("Type Process Names Separated by Commas (e.g., chrome,obs,discord):");
+                string processNamesInput = Console.ReadLine();
+                processNames = processNamesInput.Split(',').Select(p => p.Trim().ToLower()).ToList();
+            }
             List<Process> processesToLimit = new List<Process>();
             foreach (var processName in processNames)
             {
@@ -66,7 +139,6 @@ namespace RAMLIMITER
                     }
                 }).Start();
             }
-
             Thread.Sleep(-1);
         }
 
@@ -309,46 +381,56 @@ namespace RAMLIMITER
 
         static void Main(string[] args)
         {
-            new Thread(() => // taken from pinger, originally from zf9
-            {
-                var s = "        "; // 8 spaces for the titles spacing, looks very messy but who cares.
-                Thread.CurrentThread.IsBackground = true;
-                for (int i = 0; i < int.MaxValue; i++)
-                {
-                    var random = new Random();
-                    var randomNumber = random.Next(1, 5);
-
-                    if (randomNumber == 3)
-                    {
-                        Console.Title = "Have you starred the repo? " + s + s + "" + s + s + s + s + s + s + s + s + s + $"| github.com/0vm";
-                        Thread.Sleep(1500);
-                        Console.Title = "Have you starred the repo? " + s + s + "" + s + s + s + s + s + s + s + s + s + $"| github.com/0vm";
-                        Thread.Sleep(1500);
-                    }
-                    else if (randomNumber == 2)
-                    {
-                        Console.Title = "Chrome & Discord RAM Limiter" + s + "" + s + s + s + s + s + s + s + s + s + $"| github.com/0vm";
-                        Thread.Sleep(1500);
-                        Console.Title = "Chrome & Discord RAM Limiter" + s + "" + s + s + s + s + s + s + s + s + s + $"| github.com/0vm";
-                        Thread.Sleep(1500);
-                    }
-                    else if (randomNumber == 1)
-                    {
-                        Console.Title = "https://github.com/0vm/RAM-Limiter  " + s + s + s + s + s + s + s + s + $"  | github.com/0vm";
-                        Thread.Sleep(1500);
-                        Console.Title = "https://github.com/0vm/RAM-Limiter  " + s + s + s + s + s + s + s + s + $"  | github.com/0vm";
-                        Thread.Sleep(1500);
-                    }
-                }
-                Thread.Sleep(-1);
-            }).Start();
+            Console.Title = "RAM Limiter - Modified by Hypn0tick";
 
         start:
+            string argsString = string.Concat(args);
+            ElevatePrivileges(argsString);
+            Console.Clear();
+            foreach (string arg in args)
+            {
+                if (arg == "-f" | arg == "-file")
+                {
+                    CustomRamLimiter(-1, -1, true);
+                }
+                if (arg == "-c" | arg == "-custom")
+                {
+                    CustomRamLimiter(-1, -1, false);
+                }
+                if (arg == "-discord")
+                {
+                    if (args.Contains("-chrome"))
+                    {
+                        Both(-1, -1);
+                    }
+                    else
+                    {
+                        DiscordRamLimiter(-1, -1);
+                    }
+                }
+                if (arg == "-chrome")
+                {
+                    if (args.Contains("-discord"))
+                    {
+                        Both(-1, -1);
+                    }
+                    else
+                    {
+                        ChromeRamLimiter(-1, -1);
+                    }
+                }
+                if (arg == "-obs")
+                {
+                    OBSRamLimiter(-1, -1);
+                }
+            }
+            Console.Clear();
             Console.WriteLine("Just Limit Discord: 1");
             Console.WriteLine("Just Limit Chrome: 2");
             Console.WriteLine("Just Limit OBS: 3");
             Console.WriteLine("Limit Discord & Chrome: 4");
             Console.WriteLine("Limit Custom: 5");
+            Console.WriteLine("Limit Custom (External List): 6");
             ConsoleKey response = Console.ReadKey(true).Key;
             Console.WriteLine();
             if (response == ConsoleKey.D1)
@@ -375,6 +457,11 @@ namespace RAMLIMITER
             {
                 Console.Clear();
                 CustomRamLimiter(-1, -1);
+            }
+            else if (response == ConsoleKey.D6)
+            {
+                Console.Clear();
+                CustomRamLimiter(-1, -1,true);
             }
             else
             {
